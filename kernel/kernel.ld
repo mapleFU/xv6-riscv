@@ -6,6 +6,9 @@ SECTIONS
   /*
    * ensure that entry.S / _entry is at 0x80000000,
    * where qemu's -kernel jumps.
+   *
+   * 链接脚本指定了链接器怎么处理这部分的地址. ENTRY( _entry ) 被放在 0x80000000 的位置上.
+   * 前面一些空间做了 IO　相关的映射.
    */
   . = 0x80000000;
 

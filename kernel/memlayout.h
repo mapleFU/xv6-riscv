@@ -1,4 +1,6 @@
 // Physical memory layout
+// 
+// 部分定义给 vm.c 使用, 控制内存的地址映射.
 
 // qemu -machine virt is set up like this,
 // based on qemu's hw/riscv/virt.c:
@@ -14,8 +16,8 @@
 
 // the kernel uses physical memory thus:
 // 80000000 -- entry.S, then kernel text and data
-// end -- start of kernel page allocation area
-// PHYSTOP -- end RAM used by the kernel
+// end -- start of kernel page allocation area (在 kernel.ld 设置).
+// PHYSTOP -- end RAM used by the kernel (内核代码的顶端, 一个固定的值).
 
 // qemu puts UART registers here in physical memory.
 #define UART0 0x10000000L
@@ -53,6 +55,8 @@
 
 // map kernel stacks beneath the trampoline,
 // each surrounded by invalid guard pages.
+//
+// 2*PGSIZE, 中间留作 Guard Page.
 #define KSTACK(p) (TRAMPOLINE - ((p)+1)* 2*PGSIZE)
 
 // User memory layout.

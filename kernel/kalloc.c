@@ -1,6 +1,9 @@
 // Physical memory allocator, for user processes,
 // kernel stacks, page-table pages,
 // and pipe buffers. Allocates whole 4096-byte pages.
+//
+// 初始化的时候, 这里用 freerange 把所有地址分配到了这个双向链表中, 一次申请一个 Page.
+// 其实理论上这里应该有个 Buddy System 更好？但是没做就是.
 
 #include "types.h"
 #include "param.h"
@@ -14,6 +17,7 @@ void freerange(void *pa_start, void *pa_end);
 extern char end[]; // first address after kernel.
                    // defined by kernel.ld.
 
+// 侵入式单链表, 每个是一个 Page.
 struct run {
   struct run *next;
 };
@@ -27,6 +31,7 @@ void
 kinit()
 {
   initlock(&kmem.lock, "kmem");
+  // [end, PHYSTOP] 挂到空间上.
   freerange(end, (void*)PHYSTOP);
 }
 
@@ -48,10 +53,12 @@ kfree(void *pa)
 {
   struct run *r;
 
+  // pa 值负责映射需要映射的内容.
   if(((uint64)pa % PGSIZE) != 0 || (char*)pa < end || (uint64)pa >= PHYSTOP)
     panic("kfree");
 
   // Fill with junk to catch dangling refs.
+  // 放置一些脏东西.
   memset(pa, 1, PGSIZE);
 
   r = (struct run*)pa;

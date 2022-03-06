@@ -7,6 +7,7 @@
 volatile static int started = 0;
 
 // start() jumps here in supervisor mode on all CPUs.
+// 内核的 main. 和 user 的 main 不是一回事.
 void
 main()
 {
@@ -28,6 +29,8 @@ main()
     iinit();         // inode table
     fileinit();      // file table
     virtio_disk_init(); // emulated hard disk
+
+    // 最后才创建用户的线程.
     userinit();      // first user process
     __sync_synchronize();
     started = 1;

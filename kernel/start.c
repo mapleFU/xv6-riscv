@@ -8,6 +8,7 @@ void main();
 void timerinit();
 
 // entry.S needs one stack per CPU.
+// 定义了第一个栈.
 __attribute__ ((aligned (16))) char stack0[4096 * NCPU];
 
 // a scratch area per CPU for machine-mode timer interrupts.
@@ -27,7 +28,9 @@ start()
   w_mstatus(x);
 
   // set M Exception Program Counter to main, for mret.
-  // requires gcc -mcmodel=medany
+  // requires gcc -mcmodel=medany.
+  //
+  // 这个地方把返回值设置为 main.
   w_mepc((uint64)main);
 
   // disable paging for now.
@@ -51,6 +54,7 @@ start()
   w_tp(id);
 
   // switch to supervisor mode and jump to main().
+  // 因为上面的 mepc 设置, 这里可以返回到 main.
   asm volatile("mret");
 }
 

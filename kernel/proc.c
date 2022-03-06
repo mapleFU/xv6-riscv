@@ -33,10 +33,14 @@ void
 proc_mapstacks(pagetable_t kpgtbl) {
   struct proc *p;
   
+  // TODO(mwish): make it clear here.
+  // proc 数组开始正常映射, 一个 proc 对应一个内核栈.
   for(p = proc; p < &proc[NPROC]; p++) {
     char *pa = kalloc();
     if(pa == 0)
       panic("kalloc");
+
+    // 物理内存是 alloc 出来的, 虚拟地址是 kstack
     uint64 va = KSTACK((int) (p - proc));
     kvmmap(kpgtbl, va, (uint64)pa, PGSIZE, PTE_R | PTE_W);
   }
@@ -52,6 +56,7 @@ procinit(void)
   initlock(&wait_lock, "wait_lock");
   for(p = proc; p < &proc[NPROC]; p++) {
       initlock(&p->lock, "proc");
+      // kstack 对应位置, 
       p->kstack = KSTACK((int) (p - proc));
   }
 }
@@ -168,6 +173,9 @@ freeproc(struct proc *p)
 
 // Create a user page table for a given process,
 // with no user memory, but with trampoline pages.
+//
+// 创建用户空间, 然后映射需要映射的(trampoline, trapframe 等).
+// TODO(mwish): 我感觉这方面的内容能搞到 vm.c 里面? 比较 uvm.
 pagetable_t
 proc_pagetable(struct proc *p)
 {
@@ -226,22 +234,27 @@ void
 userinit(void)
 {
   struct proc *p;
-
+  // create first user process.
   p = allocproc();
   initproc = p;
   
   // allocate one user page and copy init's instructions
   // and data into it.
+  // Initialize page table mapping.
+  //
+  // 这里把 initcode 的内容拷贝到 pagetable 上.
   uvminit(p->pagetable, initcode, sizeof(initcode));
   p->sz = PGSIZE;
 
   // prepare for the very first "return" from kernel to user.
   p->trapframe->epc = 0;      // user program counter
   p->trapframe->sp = PGSIZE;  // user stack pointer
-
+  // call user/initcode.
+  // 第一个进程调用 user/initcode.S, 名称 /, 调用 initcode.
   safestrcpy(p->name, "initcode", sizeof(p->name));
   p->cwd = namei("/");
 
+  // 第一个进程改成可运行的.
   p->state = RUNNABLE;
 
   release(&p->lock);
@@ -254,7 +267,7 @@ growproc(int n)
 {
   uint sz;
   struct proc *p = myproc();
-
+  // 用 uvm alloc 来做多余的映射.
   sz = p->sz;
   if(n > 0){
     if((sz = uvmalloc(p->pagetable, sz, sz + n)) == 0) {
