@@ -1,4 +1,8 @@
 // Saved registers for kernel context switches.
+// 
+// 这个是需要保存的 context, 需要 trap 的汇编也能认识这个玩意.
+// ABI 保证了一些对应的 spec, 不需要保护所有的 14个寄存器.
+// context switch 的时候, 这些东西是需要保证安全的.
 struct context {
   uint64 ra;
   uint64 sp;
@@ -21,11 +25,13 @@ struct context {
 // Per-CPU state.
 struct cpu {
   struct proc *proc;          // The process running on this cpu, or null.
+  // 上下文只要保持 callee-saved 的
   struct context context;     // swtch() here to enter scheduler().
   int noff;                   // Depth of push_off() nesting.
   int intena;                 // Were interrupts enabled before push_off()?
 };
 
+// NCPU 是个写死的 macro, 设置了上限.
 extern struct cpu cpus[NCPU];
 
 // per-process data for the trap handling code in trampoline.S.
@@ -41,12 +47,15 @@ extern struct cpu cpus[NCPU];
 // the trapframe includes callee-saved user registers like s0-s11 because the
 // return-to-user path via usertrapret() doesn't return through
 // the entire kernel call stack.
+//
+// 每个进程都会有一个 kstack, 然后用户有 stackframe.
 struct trapframe {
   /*   0 */ uint64 kernel_satp;   // kernel page table
   /*   8 */ uint64 kernel_sp;     // top of process's kernel stack
   /*  16 */ uint64 kernel_trap;   // usertrap()
   /*  24 */ uint64 epc;           // saved user program counter
-  /*  32 */ uint64 kernel_hartid; // saved kernel tp
+  /*  32 */ uint64 kernel_hartid; // saved kernel tp(内核的 trapframe)
+
   /*  40 */ uint64 ra;
   /*  48 */ uint64 sp;
   /*  56 */ uint64 gp;

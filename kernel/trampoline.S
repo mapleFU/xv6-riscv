@@ -8,6 +8,12 @@
 	# kernel.ld causes this to be aligned
         # to a page boundary.
         #
+        # 这个操作会被挂在 TRAMPOLINE Page 上，这个 Page 本身不是 PTE_U 的，即 s 模式的代码.
+        # stvec 开始会指向这里。
+        # 这个 Page 还会被标记成 PTE_X
+        #
+        # 还需要注意的是, trapframe 定义在 proc.h 的 struct trapframe.
+        #
 	.section trampsec
 .globl trampoline
 trampoline:
@@ -23,9 +29,12 @@ uservec:
         # sscratch points to where the process's p->trapframe is
         # mapped into user space, at TRAPFRAME.
         #
+        # TRAPFRAME 本身在 sscratch 上, 这个结构体由别的地方定义, 但是 C 有比较稳定的 abi, 所以不慌.
+        #
         
 	# swap a0 and sscratch
         # so that a0 is TRAPFRAME
+        # 这个地方 swap(a0, TRAPFRAME).
         csrrw a0, sscratch, a0
 
         # save the user registers in TRAPFRAME
@@ -60,11 +69,16 @@ uservec:
         sd t5, 272(a0)
         sd t6, 280(a0)
 
+        # 寄存器本身要在 context 里面保存一份, 特殊的寄存器需要从别的地方恢复出来
+
 	# save the user a0 in p->trapframe->a0
+        # swap(t0, 原先的a0)
         csrr t0, sscratch
+        # 把原先的 a0 存起来
         sd t0, 112(a0)
 
         # restore kernel stack pointer from p->trapframe->kernel_sp
+        # 加载起来内核的一些信息.
         ld sp, 8(a0)
 
         # make tp hold the current hartid, from p->trapframe->kernel_hartid
@@ -75,6 +89,8 @@ uservec:
 
         # restore kernel page table from p->trapframe->kernel_satp
         ld t1, 0(a0)
+
+        # 切到内核页表.
         csrw satp, t1
         sfence.vma zero, zero
 
@@ -93,6 +109,7 @@ userret:
         # a1: user page table, for satp.
 
         # switch to the user page table.
+        # 这大概已经是 usermode 了, 而且开启了中断, 可能和 uservec 有并发？
         csrw satp, a1
         sfence.vma zero, zero
 

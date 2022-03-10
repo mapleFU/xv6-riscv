@@ -33,6 +33,8 @@ trapinithart(void)
 // handle an interrupt, exception, or system call from user space.
 // called from trampoline.S
 //
+// 尝试识别 dispatch 给哪个方法. 这里已经切了内核页表了.
+//
 void
 usertrap(void)
 {
@@ -43,6 +45,9 @@ usertrap(void)
 
   // send interrupts and exceptions to kerneltrap(),
   // since we're now in the kernel.
+  //
+  // 每个 CPU 有 stvec 寄存器, 这里中断显然不应该丢给之前的 `uservec` 代码,
+  // 所以切换给 `kernelvec`.
   w_stvec((uint64)kernelvec);
 
   struct proc *p = myproc();
@@ -50,6 +55,7 @@ usertrap(void)
   // save user program counter.
   p->trapframe->epc = r_sepc();
   
+  // 区分了各种调用.
   if(r_scause() == 8){
     // system call
 
@@ -62,8 +68,10 @@ usertrap(void)
 
     // an interrupt will change sstatus &c registers,
     // so don't enable until done with those registers.
+    // NOTE(mwish): 什么时候关的？好像进这里就关了, sstatus 在中断的时候 disable 了 SIE
     intr_on();
 
+    // 真实的系统调用.
     syscall();
   } else if((which_dev = devintr()) != 0){
     // ok
@@ -77,6 +85,7 @@ usertrap(void)
     exit(-1);
 
   // give up the CPU if this is a timer interrupt.
+  // 单纯切走.
   if(which_dev == 2)
     yield();
 
@@ -97,6 +106,8 @@ usertrapret(void)
   intr_off();
 
   // send syscalls, interrupts, and exceptions to trampoline.S
+  // 
+  // stvec 之前是 kernelvec, 现在恢复成了 uservec.
   w_stvec(TRAMPOLINE + (uservec - trampoline));
 
   // set up trapframe values that uservec will need when
@@ -111,6 +122,10 @@ usertrapret(void)
   
   // set S Previous Privilege mode to User.
   unsigned long x = r_sstatus();
+  // 切成 usermode.
+  // Q: 这里设置了就真成 usermode 了吗？
+  // A: 没有, SPP 只是一个必须要处理的字段. 保存之前/之后的编码, 可以参考:
+  // * https://rcore-os.github.io/rCore-Tutorial-Book-v3/chapter2/4trap-handling.html#trap-hw-mechanism
   x &= ~SSTATUS_SPP; // clear SPP to 0 for user mode
   x |= SSTATUS_SPIE; // enable interrupts in user mode
   w_sstatus(x);
@@ -119,11 +134,14 @@ usertrapret(void)
   w_sepc(p->trapframe->epc);
 
   // tell trampoline.S the user page table to switch to.
+  // TODO(mwish): 没看懂这个批东西咋写的...
   uint64 satp = MAKE_SATP(p->pagetable);
 
   // jump to trampoline.S at the top of memory, which 
   // switches to the user page table, restores user registers,
   // and switches to user mode with sret.
+  //
+  // 调用 userret().
   uint64 fn = TRAMPOLINE + (userret - trampoline);
   ((void (*)(uint64,uint64))fn)(TRAPFRAME, satp);
 }
