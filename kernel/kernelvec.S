@@ -1,4 +1,7 @@
 	#
+        # 在用户态的时候, stvec 指向 trampoline.S, 而在内核台
+        # 
+        #
         # interrupts and exceptions while in supervisor
         # mode come here.
         #

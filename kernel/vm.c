@@ -10,6 +10,8 @@
 
 /*
  * the kernel's page table.
+ * 
+ * Note(mwish): woc, kernel pagetable 只有一个
  */
 pagetable_t kernel_pagetable;
 
@@ -42,8 +44,13 @@ kvmmake(void)
   kvmmap(kpgtbl, KERNBASE, KERNBASE, (uint64)etext-KERNBASE, PTE_R | PTE_X);
 
   // map kernel data and the physical RAM we'll make use of.
-  // 映射到 PHYSTOP 的上面.
-  kvmmap(kpgtbl, (uint64)etext, (uint64)etext, PHYSTOP-(uint64)etext, PTE_R | PTE_W);
+  // 映射到 PHYSTOP 的上面. 
+  // Note(mwish): 第一次看的时候没感觉这里很重要, 现在突然发现非常非常重要.
+  // 对于 kernel 来说, etext 是 kernel code 的结尾, 这里之前的内容映射到 [KERNBASE, KERNBASE-Size] 上了.
+  // 对应是 2GB 的空间.
+  // 这里把 2GB - 后面的物理空间映射到 kernel 上, 相当于实际上 kernel 地址是和物理空间对应到的.
+  // 这些东西事后受 kalloc.c 的管理.
+  kvmmap(kpgtbl, /* vm */ (uint64)etext, /* pm */ (uint64)etext, /* size */ PHYSTOP-(uint64)etext, PTE_R | PTE_W);
 
   // map the trampoline for trap entry/exit to
   // the highest virtual address in the kernel.
@@ -108,6 +115,9 @@ walk(pagetable_t pagetable, uint64 va, int alloc)
 // Look up a virtual address, return the physical address,
 // or 0 if not mapped.
 // Can only be used to look up user pages.
+//
+// 这个是针对 Page 而定的, 拿到一个 Pagetable 和 Page 的虚拟地址, 找到
+// 对应页表的值.
 uint64
 walkaddr(pagetable_t pagetable, uint64 va)
 {
@@ -132,7 +142,7 @@ walkaddr(pagetable_t pagetable, uint64 va)
 // only used when booting.
 // does not flush TLB or enable paging.
 //
-// 从 va -> pa, 映射 size 的大小, 
+// 从 va -> pa, 映射 size 的大小. `kpgtbl` 是内核的页表.
 void
 kvmmap(pagetable_t kpgtbl, uint64 va, uint64 pa, uint64 sz, int perm)
 {
@@ -414,6 +424,8 @@ copyinstr(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max)
   int got_null = 0;
 
   while(got_null == 0 && max > 0){
+    // 找到对应的 Page 地址, 再找到物理地址.
+    // 这里相当于手动做了
     va0 = PGROUNDDOWN(srcva);
     pa0 = walkaddr(pagetable, va0);
     if(pa0 == 0)
@@ -421,7 +433,8 @@ copyinstr(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max)
     n = PGSIZE - (srcva - va0);
     if(n > max)
       n = max;
-
+    // 指向对应的物理空间, 一个个拷贝过来.
+    // Question: 对地址的保护呢？怎么没生个效
     char *p = (char *) (pa0 + (srcva - va0));
     while(n > 0){
       if(*p == '\0'){

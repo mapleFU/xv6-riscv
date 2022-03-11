@@ -40,8 +40,10 @@ proc_mapstacks(pagetable_t kpgtbl) {
     if(pa == 0)
       panic("kalloc");
 
-    // 物理内存是 alloc 出来的, 虚拟地址是 kstack
+    // 物理内存是 alloc 出来的, 虚拟地址是 kstack.
     uint64 va = KSTACK((int) (p - proc));
+    // 这个 kvmmap 本身会把 stack 的内存映射到内核页表上, 哪怕是用户的内容.
+    // 所以, kernel 有内核栈的地址映射.
     kvmmap(kpgtbl, va, (uint64)pa, PGSIZE, PTE_R | PTE_W);
   }
 }
@@ -219,6 +221,8 @@ proc_freepagetable(pagetable_t pagetable, uint64 sz)
 
 // a user program that calls exec("/init")
 // od -t xC initcode
+// 
+// 第一个程序, 调用 "/init"(实际上这里就是执行 `initcode.S` 对应的逻辑).
 uchar initcode[] = {
   0x17, 0x05, 0x00, 0x00, 0x13, 0x05, 0x45, 0x02,
   0x97, 0x05, 0x00, 0x00, 0x93, 0x85, 0x35, 0x02,

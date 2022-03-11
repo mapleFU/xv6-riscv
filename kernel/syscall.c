@@ -21,6 +21,8 @@ fetchaddr(uint64 addr, uint64 *ip)
 
 // Fetch the nul-terminated string at addr from the current process.
 // Returns length of string, not including nul, or -1 for error.
+//
+// 从进程用户态页表中拿到数据.
 int
 fetchstr(uint64 addr, char *buf, int max)
 {
@@ -31,6 +33,8 @@ fetchstr(uint64 addr, char *buf, int max)
   return strlen(buf);
 }
 
+//! 直接从 trapframe 里面拿, 这个 trapframe 在 proc.c 里面映射到了页表上,
+//! 在 trampoline.S 被初始化. 这里其实相当于从 page 里面拿.
 static uint64
 argraw(int n)
 {
