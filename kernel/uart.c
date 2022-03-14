@@ -40,6 +40,8 @@
 
 // the transmit output buffer.
 struct spinlock uart_tx_lock;
+
+// 对应的内容是一个环状队列.
 #define UART_TX_BUF_SIZE 32
 char uart_tx_buf[UART_TX_BUF_SIZE];
 uint64 uart_tx_w; // write next to uart_tx_buf[uart_tx_w % UART_TX_BUF_SIZE]
@@ -101,6 +103,7 @@ uartputc(int c)
     } else {
       uart_tx_buf[uart_tx_w % UART_TX_BUF_SIZE] = c;
       uart_tx_w += 1;
+      // 发送对应内容.
       uartstart();
       release(&uart_tx_lock);
       return;
@@ -134,15 +137,19 @@ uartputc_sync(int c)
 // in the transmit buffer, send it.
 // caller must hold uart_tx_lock.
 // called from both the top- and bottom-half.
+//
+// 写 uart, 如果它已经传送了, 那么开启, 否则返回.
 void
 uartstart()
 {
   while(1){
+    // 已经发送完成了.
     if(uart_tx_w == uart_tx_r){
       // transmit buffer is empty.
       return;
     }
     
+    // 不是 idle 状态, 正在发送. 这里等待下一次被唤醒.
     if((ReadReg(LSR) & LSR_TX_IDLE) == 0){
       // the UART transmit holding register is full,
       // so we cannot give it another byte.

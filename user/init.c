@@ -16,6 +16,7 @@ main(void)
 {
   int pid, wpid;
 
+  // 打开 console 设备对应的文件.
   if(open("console", O_RDWR) < 0){
     mknod("console", CONSOLE, 0);
     open("console", O_RDWR);

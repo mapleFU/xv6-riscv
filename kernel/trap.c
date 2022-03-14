@@ -191,6 +191,8 @@ clockintr()
 // returns 2 if timer interrupt,
 // 1 if other device,
 // 0 if not recognized.
+//
+// 
 int
 devintr()
 {
@@ -203,6 +205,7 @@ devintr()
     // irq indicates which device interrupted.
     int irq = plic_claim();
 
+    // 这里表示可能是 uart 的 arq(硬件), 也可能是 virtio 协议的.
     if(irq == UART0_IRQ){
       uartintr();
     } else if(irq == VIRTIO0_IRQ){

@@ -8,6 +8,8 @@
 //   control-d -- end of file
 //   control-p -- print process list
 //
+// UART 有一个 FIFO + RING 的队列，来做相关的调度.
+//
 
 #include <stdarg.h>
 
@@ -30,6 +32,7 @@
 // called by printf, and to echo input characters,
 // but not from write().
 //
+// 给 uart 队列发送对应的消息.
 void
 consputc(int c)
 {
@@ -132,6 +135,8 @@ consoleread(int user_dst, uint64 dst, int n)
 // do erase/kill processing, append to cons.buf,
 // wake up consoleread() if a whole line has arrived.
 //
+// 处理对应的 interrupt.
+//
 void
 consoleintr(int c)
 {
@@ -165,6 +170,7 @@ consoleintr(int c)
       // store for consumption by consoleread().
       cons.buf[cons.e++ % INPUT_BUF] = c;
 
+      // 如果是特殊的字符, 需要通知对应的读对象.
       if(c == '\n' || c == C('D') || cons.e == cons.r+INPUT_BUF){
         // wake up consoleread() if a whole line (or end-of-file)
         // has arrived.
@@ -187,6 +193,9 @@ consoleinit(void)
 
   // connect read and write system calls
   // to consoleread and consolewrite.
+  //
+  // 读写对应的 syscall 绑定到这上面, 这是内核代码.
+  // 在读写的时候都会创建.
   devsw[CONSOLE].read = consoleread;
   devsw[CONSOLE].write = consolewrite;
 }

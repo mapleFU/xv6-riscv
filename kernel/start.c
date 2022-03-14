@@ -12,6 +12,7 @@ void timerinit();
 __attribute__ ((aligned (16))) char stack0[4096 * NCPU];
 
 // a scratch area per CPU for machine-mode timer interrupts.
+// 时间相关的标记.
 uint64 timer_scratch[NCPU][5];
 
 // assembly code in kernelvec.S for machine-mode timer interrupt.
@@ -47,6 +48,7 @@ start()
   w_pmpcfg0(0xf);
 
   // ask for clock interrupts.
+  // 开启时钟硬件和相关的中断.
   timerinit();
 
   // keep each CPU's hartid in its tp register, for cpuid().
@@ -66,6 +68,7 @@ void
 timerinit()
 {
   // each CPU has a separate source of timer interrupts.
+  // (注意, 这里是 per CPU 的).
   int id = r_mhartid();
 
   // ask the CLINT for a timer interrupt.
