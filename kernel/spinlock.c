@@ -21,6 +21,10 @@ initlock(struct spinlock *lk, char *name)
 void
 acquire(struct spinlock *lk)
 {
+  // 如果:
+  // * acquire
+  // * timer interrupt
+  // * timer interrupt 在调度之前拿同一把锁, 哦吼.
   push_off(); // disable interrupts to avoid deadlock.
   if(holding(lk))
     panic("acquire");
@@ -29,6 +33,8 @@ acquire(struct spinlock *lk)
   //   a5 = 1
   //   s1 = &lk->locked
   //   amoswap.w.aq a5, a5, (s1)
+  //
+  // 这个地方使用 acquire, 因为下面的内容不会被放到这前面.
   while(__sync_lock_test_and_set(&lk->locked, 1) != 0)
     ;
 
@@ -36,6 +42,8 @@ acquire(struct spinlock *lk)
   // past this point, to ensure that the critical section's memory
   // references happen strictly after the lock is acquired.
   // On RISC-V, this emits a fence instruction.
+  //
+  // 相当于手动给 lk->cpu 插入了一个 fencing, 让上面的东西不会被重拍下来
   __sync_synchronize();
 
   // Record info about lock acquisition for holding() and debugging.
@@ -49,6 +57,7 @@ release(struct spinlock *lk)
   if(!holding(lk))
     panic("release");
 
+  // 这个不会被重排到下面去.
   lk->cpu = 0;
 
   // Tell the C compiler and the CPU to not move loads or stores
@@ -84,6 +93,8 @@ holding(struct spinlock *lk)
 // push_off/pop_off are like intr_off()/intr_on() except that they are matched:
 // it takes two pop_off()s to undo two push_off()s.  Also, if interrupts
 // are initially off, then push_off, pop_off leaves them off.
+//
+// 相当于可重入的 intr_off, 成对使用.
 
 void
 push_off(void)

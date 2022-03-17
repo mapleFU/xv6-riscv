@@ -21,6 +21,8 @@ initsleeplock(struct sleeplock *lk, char *name)
 void
 acquiresleep(struct sleeplock *lk)
 {
+  // 拿到之后, 直到上个一个 release 掉权限, 这里都会 sleep.
+  // 释放锁的时候, 这里会 acquire(lk), 设置 locked = false, 返回.
   acquire(&lk->lk);
   while (lk->locked) {
     sleep(lk, &lk->lk);
