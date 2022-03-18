@@ -284,6 +284,8 @@ intr_off()
 }
 
 // are device interrupts enabled?
+// 
+// enabled: 1
 static inline int
 intr_get()
 {

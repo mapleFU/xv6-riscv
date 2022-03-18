@@ -145,6 +145,7 @@ found:
   // Set up new context to start executing at forkret,
   // which returns to user space.
   memset(&p->context, 0, sizeof(p->context));
+  // 强行设置 ra 和 sp, 初始化对应内容. 由 swtch 驱动.
   p->context.ra = (uint64)forkret;
   p->context.sp = p->kstack + PGSIZE;
 
@@ -451,25 +452,36 @@ wait(uint64 addr)
 //  - swtch to start running that process.
 //  - eventually that process transfers control
 //    via swtch back to the scheduler.
+//
+// 每个进程唯一的调度器, 上下文在 c->context 上.
 void
 scheduler(void)
 {
   struct proc *p;
   struct cpu *c = mycpu();
   
+  // 拿到现有的 cpu 设置.
   c->proc = 0;
   for(;;){
     // Avoid deadlock by ensuring that devices can interrupt.
     intr_on();
 
+    // 顺序调度可运行的 proc, 连 FIFO 都不是捏。
     for(p = proc; p < &proc[NPROC]; p++) {
       acquire(&p->lock);
+      // 找到可以 runable thread, 然后切到 userspace, 下半部会自己恢复.
       if(p->state == RUNNABLE) {
         // Switch to chosen process.  It is the process's job
         // to release its lock and then reacquire it
         // before jumping back to us.
         p->state = RUNNING;
         c->proc = p;
+        // swtch 做存储/切换寄存器, 把寄存器写到 old, 然后加载 new.
+        // 因为这里面涉及 ra, 所以返回会返回到用户程序.
+        // 把目前上下文存在 c->context 上, 然后加载 p->context, 就切过去.
+        // 
+        // 正确性: swtch 到用户线程的时候, 和切回来的时候, 两边是「同一个进程」
+        // , 所以可以保证正确.
         swtch(&c->context, &p->context);
 
         // Process is done running for now.
@@ -494,6 +506,7 @@ sched(void)
   int intena;
   struct proc *p = myproc();
 
+  // 必须持有锁.
   if(!holding(&p->lock))
     panic("sched p->lock");
   if(mycpu()->noff != 1)
@@ -504,23 +517,31 @@ sched(void)
     panic("sched interruptible");
 
   intena = mycpu()->intena;
+  // 把 context 弄到 mycpu 的上头, 切换到 `schedule`.
+  // 这里 p->context 存取了 old, 加载了 mycpu()->context.
   swtch(&p->context, &mycpu()->context);
   mycpu()->intena = intena;
 }
 
 // Give up the CPU for one scheduling round.
+// Note(mwish): yield 调用的时候必须是关中断的.
 void
 yield(void)
 {
   struct proc *p = myproc();
+  // 必须获取进程的锁
   acquire(&p->lock);
+  // 改成 runable 的.
   p->state = RUNNABLE;
+  // 上半部的终点: 调用 sched.
   sched();
   release(&p->lock);
 }
 
 // A fork child's very first scheduling by scheduler()
 // will swtch to forkret.
+//
+// UNUSED 被调用会切到 forkret, 创建初始进程.
 void
 forkret(void)
 {
@@ -542,6 +563,8 @@ forkret(void)
 
 // Atomically release lock and sleep on chan.
 // Reacquires lock when awakened.
+//
+// sleep 应该 grab 了 lk. 把 proc 标记为 sleeping, 然后释放 cpu.
 void
 sleep(void *chan, struct spinlock *lk)
 {
@@ -573,6 +596,8 @@ sleep(void *chan, struct spinlock *lk)
 
 // Wake up all processes sleeping on chan.
 // Must be called without any p->lock.
+//
+// 这里要求唤醒同一把锁. 为了防止虚假唤醒, wakeup 可能也需要 spinlock.
 void
 wakeup(void *chan)
 {

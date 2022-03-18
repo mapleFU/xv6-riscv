@@ -22,6 +22,7 @@ swtch:
         sd s10, 96(a0)
         sd s11, 104(a0)
 
+        # ra: return address 已经被修改了, 所以返回到另一个函数.
         ld ra, 0(a1)
         ld sp, 8(a1)
         ld s0, 16(a1)

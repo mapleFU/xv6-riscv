@@ -3,6 +3,9 @@
 // 这个是需要保存的 context, 需要 trap 的汇编也能认识这个玩意.
 // ABI 保证了一些对应的 spec, 不需要保护所有的 14个寄存器.
 // context switch 的时候, 这些东西是需要保证安全的.
+//
+// 可以看到, 用户 trap 到内核的时候, 保存的不止 `context`, 而是 trapframe.
+// 这里 context 是内核 switch 的时候, 
 struct context {
   uint64 ra;
   uint64 sp;
