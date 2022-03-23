@@ -23,6 +23,8 @@
 #include "fs.h"
 #include "buf.h"
 
+// 全局的 buffer cache 入口, 会有一个物理的 NBUF * BLOCK_SIZE 的缓存,
+// 和逻辑的 lru list.
 struct {
   struct spinlock lock;
   struct buf buf[NBUF];
@@ -43,6 +45,8 @@ binit(void)
   // Create linked list of buffers
   bcache.head.prev = &bcache.head;
   bcache.head.next = &bcache.head;
+
+  // 双向链表, 每次插入 bcache.head.next
   for(b = bcache.buf; b < bcache.buf+NBUF; b++){
     b->next = bcache.head.next;
     b->prev = &bcache.head;
@@ -55,6 +59,12 @@ binit(void)
 // Look through buffer cache for block on device dev.
 // If not found, allocate a buffer.
 // In either case, return locked buffer.
+//
+// 遍历, blockno 是具体的序列号, 先尝试看看有没有已经缓存了这个块, 有的话添加
+// refcnt 然后占锁返回 (refcnt 似乎是由 bcache.lock 保护的).
+// 没有的话, LRU 摘掉 free(refcnt == 0) 的块, 然后这个会给到用户.
+//
+// bget 不会调整 LRU 的内容.
 static struct buf*
 bget(uint dev, uint blockno)
 {
@@ -67,6 +77,8 @@ bget(uint dev, uint blockno)
     if(b->dev == dev && b->blockno == blockno){
       b->refcnt++;
       release(&bcache.lock);
+      // 找到这个块之后, 要保证对数据的访问是串行的.
+      // 因为它没有从 bcache 链表摘出去, 会有并发线程访问这个块.
       acquiresleep(&b->lock);
       return b;
     }
@@ -94,6 +106,7 @@ bread(uint dev, uint blockno)
 {
   struct buf *b;
 
+  // 只有 bread 之后, 内存才是 invalid 的.
   b = bget(dev, blockno);
   if(!b->valid) {
     virtio_disk_rw(b, 0);
@@ -119,10 +132,12 @@ brelse(struct buf *b)
   if(!holdingsleep(&b->lock))
     panic("brelse");
 
+  // 只有这个地方会占用.
   releasesleep(&b->lock);
 
   acquire(&bcache.lock);
   b->refcnt--;
+  // 摘掉, 放到头部
   if (b->refcnt == 0) {
     // no one is waiting for it.
     b->next->prev = b->prev;

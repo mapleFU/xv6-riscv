@@ -68,7 +68,9 @@ balloc(uint dev)
   struct buf *bp;
 
   bp = 0;
+  // 根据 superblock 来处理.
   for(b = 0; b < sb.size; b += BPB){
+    // 在某个设备找到管理块.
     bp = bread(dev, BBLOCK(b, sb));
     for(bi = 0; bi < BPB && b + bi < sb.size; bi++){
       m = 1 << (bi % 8);

@@ -15,11 +15,15 @@
 // any reasoning required about whether a commit might
 // write an uncommitted system call's updates to disk.
 //
+// Group Commit 只会在没有任何写的时候更新.
+//
 // A system call should call begin_op()/end_op() to mark
 // its start and end. Usually begin_op() just increments
 // the count of in-progress FS system calls and returns.
 // But if it thinks the log is close to running out, it
 // sleeps until the last outstanding end_op() commits.
+//
+// begin_op 只是触发计数器.
 //
 // The log is a physical re-do log containing disk blocks.
 // The on-disk log format:
@@ -123,6 +127,8 @@ recover_from_log(void)
 }
 
 // called at the start of each FS system call.
+// 
+//
 void
 begin_op(void)
 {
@@ -143,6 +149,8 @@ begin_op(void)
 
 // called at the end of each FS system call.
 // commits if this was the last outstanding operation.
+//
+// Note(mwish): 这个看起来就 --count, 我还以为会等到 flush 结束..
 void
 end_op(void)
 {
@@ -153,16 +161,21 @@ end_op(void)
   if(log.committing)
     panic("log.committing");
   if(log.outstanding == 0){
+    // 选到了唯一的 do_commit leader.
     do_commit = 1;
     log.committing = 1;
   } else {
     // begin_op() may be waiting for log space,
     // and decrementing log.outstanding has decreased
     // the amount of reserved space.
+    //
+    // 唤醒别的进程, 大家一起润.
     wakeup(&log);
   }
   release(&log.lock);
 
+  // do_commit 的线程会负责占锁然后 write-logs.
+  // 我的疑惑是..这个竟然是最后一个线程负责, 为啥不是第一个捏.
   if(do_commit){
     // call commit w/o holding locks, since not allowed
     // to sleep with locks.
@@ -180,6 +193,7 @@ write_log(void)
 {
   int tail;
 
+  // 感觉有点像 MySQL 那种 double write.
   for (tail = 0; tail < log.lh.n; tail++) {
     struct buf *to = bread(log.dev, log.start+tail+1); // log block
     struct buf *from = bread(log.dev, log.lh.block[tail]); // cache block
@@ -190,6 +204,8 @@ write_log(void)
   }
 }
 
+// Commit 是一个 GroupCommit, 负责具体写到 Block 上, 在修改之前, 这些都是
+// memory 的变更.
 static void
 commit()
 {
@@ -222,12 +238,18 @@ log_write(struct buf *b)
   if (log.outstanding < 1)
     panic("log_write outside of trans");
 
+  // 把需要写的日志 Batch 到内存里, 先看看在不在 [0, log.lh.n) 内.
   for (i = 0; i < log.lh.n; i++) {
     if (log.lh.block[i] == b->blockno)   // log absorption
       break;
   }
+  // 有两种可能:
+  // 1. 上面找到了
+  // 2. i == log.lh.n, 需要撑大, 同时要 pin 对应的 block, 因为这里有两份内存占用了, 不能回收.
   log.lh.block[i] = b->blockno;
   if (i == log.lh.n) {  // Add new block to log?
+    // Note(mwish): 我感觉这个 pin 不是一个很正常的 refcnt + reclaim,
+    // 而是在 brelease 
     bpin(b);
     log.lh.n++;
   }
