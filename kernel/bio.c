@@ -25,13 +25,30 @@
 
 // 全局的 buffer cache 入口, 会有一个物理的 NBUF * BLOCK_SIZE 的缓存,
 // 和逻辑的 lru list.
+//
+// 相对于 kalloc/kfree, 这个资源是单 CPU 的, kalloc 和 kfree 是不会共享的, 因为
+// 一个 CPU 除了 Steal 不会拿别的核心的资源. 但是 bcache 的 b系列接口 可能只获得
+// 相同的 block, 所以这里不能 per-cpu.
+//
+// 所以如果要提升并发, 这里需要采用 partition 的形式. 每个会 shard 到某个 bucket 里面, 然后按照 bucket 来分配.
+// 这里应该没有一个全局的锁, 因为 sharding 是硬性的, 不会有 re-hash.
+//
+// cache 归还这里, 需要参考原本的 LRU 逻辑:
+// 1. 一开始, 所有的 `struct buf` 组成了一个双向链表.
+// 2. `get` 的时候, 会倾向于从尾部获取, 当然获取之后篮子都没改变.
+// 3. `release` 的时候, 会从原来的位置摘掉, 放到链表的头部. 下一次会倾向于拿到这个.
 struct {
+  // 全局的 lock, 只有 steal 的时候会使用
   struct spinlock lock;
+  // 每一个 buf 会有一个 sleeplock.
+  // 它们物理上会 align 在一起.
   struct buf buf[NBUF];
 
   // Linked list of all buffers, through prev/next.
   // Sorted by how recently the buffer was used.
   // head.next is most recent, head.prev is least.
+  //
+  // 一个傻逼的 LRU.
   struct buf head;
 } bcache;
 

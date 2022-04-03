@@ -160,6 +160,8 @@ bfree(int dev, uint b)
 // pathname lookup. iget() increments ip->ref so that the inode
 // stays in the table and pointers to it remain valid.
 //
+// (iget 是拿到 fd, 和读写这种分开了, 来保障性能).
+//
 // Many internal file system functions expect the caller to
 // have locked the inodes involved; this lets callers create
 // multi-step atomic operations.
@@ -173,6 +175,7 @@ bfree(int dev, uint b)
 // dev, and inum.  One must hold ip->lock in order to
 // read or write that inode's ip->valid, ip->size, ip->type, &c.
 
+// 同步对条目的访问，顺便做一个类似缓存的工作.
 struct {
   struct spinlock lock;
   struct inode inode[NINODE];
@@ -202,6 +205,8 @@ ialloc(uint dev, short type)
   struct dinode *dip;
 
   for(inum = 1; inum < sb.ninodes; inum++){
+    // 读取 inode 段, 找到一个 free inode.
+    // 这里 inode 没有分配的 bitmap, 直接根据 dip == 0 来 check.
     bp = bread(dev, IBLOCK(inum, sb));
     dip = (struct dinode*)bp->data + inum%IPB;
     if(dip->type == 0){  // a free inode
@@ -241,6 +246,8 @@ iupdate(struct inode *ip)
 // Find the inode with number inum on device dev
 // and return the in-memory copy. Does not lock
 // the inode and does not read it from disk.
+//
+// 要么找到最后一个 `empty` 的对象, 要么直接返回.
 static struct inode*
 iget(uint dev, uint inum)
 {
@@ -264,6 +271,7 @@ iget(uint dev, uint inum)
   if(empty == 0)
     panic("iget: no inodes");
 
+  // 具体的 assign.
   ip = empty;
   ip->dev = dev;
   ip->inum = inum;
@@ -336,6 +344,9 @@ iput(struct inode *ip)
 {
   acquire(&itable.lock);
 
+  // 真正处理 unlink 的逻辑.
+  // Note: 如果没有 ref 的话, 这里不会有任何 reclaim 逻辑, 而是等待
+  // iget 来获取这个块.
   if(ip->ref == 1 && ip->valid && ip->nlink == 0){
     // inode has no links and no other references: truncate and free.
 
@@ -347,6 +358,7 @@ iput(struct inode *ip)
 
     itrunc(ip);
     ip->type = 0;
+    // 具体写入块层.
     iupdate(ip);
     ip->valid = 0;
 
@@ -376,6 +388,11 @@ iunlockput(struct inode *ip)
 
 // Return the disk block address of the nth block in inode ip.
 // If there is no such block, bmap allocates one.
+//
+// bmap 本身如果越界就申请内存, 它不会管 ip->size 等因素, 遇到越界就直接 alloc,
+// 这里需要外部来检查. bmap 也不注重 size.
+// 它就嗯返回一个块的地址. 然后还有一点很奇怪的事情是, 它只会对新 indirect 的块做 log_write, 很
+// 神必.
 static uint
 bmap(struct inode *ip, uint bn)
 {
@@ -391,6 +408,7 @@ bmap(struct inode *ip, uint bn)
 
   if(bn < NINDIRECT){
     // Load indirect block, allocating if necessary.
+    // 需要先申请一块 block.
     if((addr = ip->addrs[NDIRECT]) == 0)
       ip->addrs[NDIRECT] = addr = balloc(ip->dev);
     bp = bread(ip->dev, addr);
@@ -425,6 +443,7 @@ itrunc(struct inode *ip)
   if(ip->addrs[NDIRECT]){
     bp = bread(ip->dev, ip->addrs[NDIRECT]);
     a = (uint*)bp->data;
+    // 最后一个块才可能存放 indirect 数据, 而且, 只有一个哦.
     for(j = 0; j < NINDIRECT; j++){
       if(a[j])
         bfree(ip->dev, a[j]);
@@ -454,12 +473,15 @@ stati(struct inode *ip, struct stat *st)
 // Caller must hold ip->lock.
 // If user_dst==1, then dst is a user virtual address;
 // otherwise, dst is a kernel address.
+//
+// bread 然后 copy 出去. 这里有 user_dst 和 dst, 根据这个看看是拷贝到哪一层.
 int
 readi(struct inode *ip, int user_dst, uint64 dst, uint off, uint n)
 {
   uint tot, m;
   struct buf *bp;
 
+  // 首先需要检查大小, bmap 感觉就嗯 alloc
   if(off > ip->size || off + n < off)
     return 0;
   if(off + n > ip->size)
@@ -528,6 +550,9 @@ namecmp(const char *s, const char *t)
 
 // Look for a directory entry in a directory.
 // If found, set *poff to byte offset of entry.
+//
+// 通过 readi 来不断读取对应的 dp, 因为 ilock 了, 所以这个地方 block 的读
+// 都是在 cache 内的.
 struct inode*
 dirlookup(struct inode *dp, char *name, uint *poff)
 {
@@ -542,6 +567,7 @@ dirlookup(struct inode *dp, char *name, uint *poff)
       panic("dirlookup read");
     if(de.inum == 0)
       continue;
+    // 比较并读取到合适的 de.name.
     if(namecmp(name, de.name) == 0){
       // entry matches path element
       if(poff)
@@ -563,12 +589,16 @@ dirlink(struct inode *dp, char *name, uint inum)
   struct inode *ip;
 
   // Check that name is not present.
+  // 如果找得到, 就 reclaim 这块内存.
   if((ip = dirlookup(dp, name, 0)) != 0){
     iput(ip);
     return -1;
   }
 
-  // Look for an empty dirent.
+  // 下面是挑选一段 de 内存然后写入.
+  // 并发: dp 拿到的时候应该 grab 了 sleeplock.
+
+  // Look for an empty dirent
   for(off = 0; off < dp->size; off += sizeof(de)){
     if(readi(dp, 0, (uint64)&de, off, sizeof(de)) != sizeof(de))
       panic("dirlink read");
@@ -627,11 +657,17 @@ skipelem(char *path, char *name)
 // If parent != 0, return the inode for the parent and copy the final
 // path element into name, which must have room for DIRSIZ bytes.
 // Must be called inside a transaction since it calls iput().
+//
+// 关于名称的调用, 通过名称走到具体的 inode.
+// 锁协议: 一次只会锁一个 inode.
+// 感觉其实有并发的时候, 靠锁来同步, 然后因为 `rm -rf` 这种实际上是多个操作, 所以
+// 实际上单个操作的时候没有并发的问题.
 static struct inode*
 namex(char *path, int nameiparent, char *name)
 {
   struct inode *ip, *next;
 
+  // 判断是绝对路径还是相对路径
   if(*path == '/')
     ip = iget(ROOTDEV, ROOTINO);
   else
@@ -639,6 +675,7 @@ namex(char *path, int nameiparent, char *name)
 
   while((path = skipelem(path, name)) != 0){
     ilock(ip);
+    // 找不到了, 不存在.
     if(ip->type != T_DIR){
       iunlockput(ip);
       return 0;

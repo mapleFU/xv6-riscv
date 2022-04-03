@@ -9,6 +9,8 @@
 // [ boot block | super block | log | inode blocks |
 //                                          free bit map | data blocks]
 //
+// superblock 应该用 static_assert 来严格小于 BSIZE. 这里记录了非常多分配的元信息.
+//
 // mkfs computes the super block and builds an initial file system. The
 // super block describes the disk layout:
 struct superblock {
@@ -29,12 +31,19 @@ struct superblock {
 #define MAXFILE (NDIRECT + NINDIRECT)
 
 // On-disk inode structure
+// sizeof(dinode) == 2 * 4 + 4 + 4 * 13 == 64
 struct dinode {
+  // 区分 file, directory, device, 这些内容定义在 `stats.h`
+  // 此外, type == 0 表示 free.
   short type;           // File type
   short major;          // Major device number (T_DEVICE only)
   short minor;          // Minor device number (T_DEVICE only)
+  // 引用这个 inode 的 directory 对象.
+  // (话说, 每个目录都会引用自己和父节点吧).
   short nlink;          // Number of links to inode in file system
   uint size;            // Size of file (bytes)
+  // 具体持有这些内容的 Disk 块的地址.
+  // TODO(mwish): 如果要多级的话, 这里怎么表示? 这个 dinode 怎么这么大.
   uint addrs[NDIRECT+1];   // Data block addresses
 };
 
@@ -53,6 +62,7 @@ struct dinode {
 // Directory is a file containing a sequence of dirent structures.
 #define DIRSIZ 14
 
+// 目录项的内容, 16B.
 struct dirent {
   ushort inum;
   char name[DIRSIZ];
